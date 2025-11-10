@@ -1,0 +1,15 @@
+{
+    "name": "rms/deye-cloud-api",
+    "description": "Deye Cloud API Integration for RMS",
+    "type": "project",
+    "require": {
+        "php": "^7.4|^8.0",
+        "guzzlehttp/guzzle": "^7.0",
+        "vlucas/phpdotenv": "^5.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "DeyeCloud\\": "src/"
+        }
+    }
+}

@@ -1,0 +1,737 @@
+<?php
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+  exit(0);
+}
+
+require_once __DIR__ . '/vendor/autoload.php';
+
+use Dotenv\Dotenv;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
+
+class DeyeCloudAPI
+{
+  private $client;
+  private $baseUrl;
+  private $appId;
+  private $appSecret;
+  private $email;
+  private $password;
+  private $accessToken;
+  private $tokenExpiry;
+
+  public function __construct()
+  {
+    $dotenv = Dotenv::createImmutable(__DIR__);
+    $dotenv->load();
+
+    $this->baseUrl = $_ENV['DEYE_BASE_URL'];
+    $this->appId = $_ENV['DEYE_APP_ID'];
+    $this->appSecret = $_ENV['DEYE_APP_SECRET'];
+    $this->email = $_ENV['DEYE_EMAIL'];
+    $this->password = $_ENV['DEYE_PASSWORD'];
+
+    $this->client = new Client([
+      'timeout' => 10.0,
+      'verify' => false // Only for development
+    ]);
+
+    $this->accessToken = null;
+    $this->tokenExpiry = 0;
+  }
+
+  /**
+   * 1️⃣ Obtain Access Token
+   */
+  private function obtainToken()
+  {
+    try {
+      $hashedPassword = hash('sha256', $this->password);
+
+      $url = $this->baseUrl . "/account/token?appId=" . $this->appId;
+
+      $response = $this->client->post($url, [
+        'json' => [
+          'appSecret' => $this->appSecret,
+          'email' => $this->email,
+          'password' => $hashedPassword,
+          'companyId' => '0'
+        ],
+        'headers' => [
+          'Content-Type' => 'application/json'
+        ]
+      ]);
+
+      $data = json_decode($response->getBody(), true);
+
+      if (isset($data['accessToken'])) {
+        $this->accessToken = $data['accessToken'];
+        $this->tokenExpiry = time() + ($data['expiresIn'] ?? 3600);
+        error_log("✅ Token obtained successfully");
+        return true;
+      } else {
+        error_log("❌ Failed to get token: " . json_encode($data));
+        return false;
+      }
+    } catch (Exception $e) {
+      error_log("❌ Token fetch error: " . $e->getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * 2️⃣ Ensure valid token
+   */
+  private function ensureToken()
+  {
+    if (!$this->accessToken || time() > $this->tokenExpiry) {
+      return $this->obtainToken();
+    }
+    return true;
+  }
+
+  /**
+   * 3️⃣ Helper POST request
+   */
+  public function deyePost($endpoint, $payload = [])
+  {
+    if (!$this->ensureToken()) {
+      throw new Exception("Failed to obtain valid token");
+    }
+
+    $url = $this->baseUrl . $endpoint;
+
+    error_log("🌐 Making request to: " . $url);
+    error_log("📤 Payload: " . json_encode($payload));
+    error_log("🔑 Token present: " . ($this->accessToken ? 'YES' : 'NO'));
+
+    try {
+      $response = $this->client->post($url, [
+        'json' => $payload,
+        'headers' => [
+          'Content-Type' => 'application/json',
+          'Authorization' => 'Bearer ' . $this->accessToken
+        ]
+      ]);
+
+      $data = json_decode($response->getBody(), true);
+      error_log("✅ API Response status: " . $response->getStatusCode());
+
+      return $data;
+    } catch (RequestException $e) {
+      error_log("❌ Deye API Error [" . $endpoint . "]");
+
+      if ($e->hasResponse()) {
+        $response = $e->getResponse();
+        error_log("🔍 Status: " . $response->getStatusCode());
+        error_log("🔍 Response Data: " . $response->getBody());
+      }
+
+      throw $e;
+    }
+  }
+
+  /**
+   * Get connect status text - CHANGED TO PUBLIC
+   */
+  public function getConnectStatusText($status)
+  {
+    $statusMap = [
+      0 => "Offline",
+      1 => "Online",
+      2 => "Alert"
+    ];
+    return $statusMap[$status] ?? "Unknown";
+  }
+
+  /**
+   * Get product type - CHANGED TO PUBLIC
+   */
+  public function getProductType($productId)
+  {
+    $productMap = [
+      "0_5412_1" => "3Phase High-Voltage Hybrid",
+      "0_5411_1" => "3Phase Low-Voltage Hybrid",
+      "0_5407_1" => "1Phase Hybrid"
+    ];
+    return $productMap[$productId] ?? $productId ?? "Unknown";
+  }
+}
+
+// Initialize API
+$deyeAPI = new DeyeCloudAPI();
+
+/**
+ * 4️⃣ API Routes Handler
+ */
+function sendResponse($data, $statusCode = 200)
+{
+  http_response_code($statusCode);
+  echo json_encode($data);
+  exit;
+}
+
+function sendError($message, $statusCode = 500)
+{
+  sendResponse([
+    'success' => false,
+    'error' => $message
+  ], $statusCode);
+}
+
+// Get request method and path
+$method = $_SERVER['REQUEST_METHOD'];
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$query = $_GET;
+
+try {
+  // 🟢 Health Check
+  if ($path === '/' && $method === 'GET') {
+    sendResponse(['message' => '✅ Deye Cloud Backend Server Running']);
+  }
+
+  // // 🟢 Get all stations => this is not working 
+  // if ($path === '/api/stations' && $method === 'GET') {
+  //     $data = $deyeAPI->deyePost('/station/list', []);
+  //     $stationData = $data['data'] ?? $data['stationList'] ?? [];
+  //     sendResponse(['success' => true, 'data' => $stationData]);
+  // }
+
+
+  // // 🟢 Get all stations - FIXED VERSION  => V.0.1
+  // if ($path === '/api/stations' && $method === 'GET') {
+  //   try {
+  //     error_log("📡 Fetching all stations...");
+
+  //     // The station/list endpoint likely expects a specific payload structure
+  //     // Based on the error "invalid param type", let's try different payloads
+  //     $payload = [
+  //       'page' => 1,
+  //       'size' => 100
+  //     ];
+
+  //     error_log("📤 Sending stations payload: " . json_encode($payload));
+
+  //     $data = $deyeAPI->deyePost('/station/list', $payload);
+
+  //     // Try different response structures
+  //     $stationData = $data['data'] ?? $data['stationList'] ?? $data['list'] ?? $data;
+
+  //     error_log("📥 Stations response: " . json_encode($data));
+  //     error_log("📊 Found stations: " . count($stationData));
+
+  //     sendResponse([
+  //       'success' => true,
+  //       'data' => $stationData,
+  //       'rawResponse' => $data // Include for debugging
+  //     ]);
+  //   } catch (Exception $e) {
+  //     error_log("❌ Stations list error: " . $e->getMessage());
+  //     sendError("Failed to fetch stations: " . $e->getMessage(), 500);
+  //   }
+  // }
+
+
+  // 🟢 Get all stations - WORKING VERSION => V.0.2
+  if ($path === '/api/stations' && $method === 'GET') {
+    try {
+      error_log("📡 Fetching all stations...");
+
+      // Working payload for station list
+      $payload = [
+        'page' => 1,
+        'size' => 100
+      ];
+
+      error_log("📤 Sending stations payload: " . json_encode($payload));
+
+      $data = $deyeAPI->deyePost('/station/list', $payload);
+
+      // Extract station data from response
+      $stationData = $data['stationList'] ?? $data['data'] ?? [];
+
+      error_log("✅ Stations fetched successfully: " . count($stationData) . " stations found");
+
+      sendResponse([
+        'success' => true,
+        'data' => $stationData,
+        'total' => count($stationData)
+      ]);
+    } catch (Exception $e) {
+      error_log("❌ Stations list error: " . $e->getMessage());
+      sendError("Failed to fetch stations: " . $e->getMessage(), 500);
+    }
+  }
+  // 🟢 Get station latest data
+  if (preg_match('#^/api/stations/latest/(\d+)$#', $path, $matches) && $method === 'GET') {
+    $stationId = $matches[1];
+    error_log("📡 Fetching latest data for station: " . $stationId);
+
+    if (!$stationId) {
+      sendError("Missing stationId", 400);
+    }
+
+    $payload = ['stationId' => (int)$stationId];
+    error_log("📤 Sending payload: " . json_encode($payload));
+
+    $response = $deyeAPI->deyePost('/station/latest', $payload);
+    error_log("📥 Raw API response: " . json_encode($response));
+
+    sendResponse([
+      'success' => true,
+      'data' => $response
+    ]);
+  }
+
+  // // 🟢 Get station energy summary
+  // if (preg_match('#^/api/stations/summary/(\d+)$#', $path, $matches) && $method === 'GET') {
+  //   $stationId = (int)$matches[1];
+  //   error_log("📡 Fetching summary for station: " . $stationId);
+
+  //   if ($stationId <= 0) {
+  //     sendError("Invalid stationId", 400);
+  //   }
+
+  //   $now = new DateTime();
+  //   error_log("🕐 Current time: " . $now->format('Y-m-d H:i:s'));
+
+  //   $fetchHistory = function ($granularity, $startAt, $endAt, $periodName) use ($deyeAPI, $stationId) {
+  //     error_log("\n🔍 Fetching " . $periodName . " history...");
+  //     error_log("📊 Granularity: " . $granularity . ", Start: " . $startAt . ", End: " . $endAt);
+
+  //     $payload = [
+  //       'stationId' => $stationId,
+  //       'granularity' => $granularity,
+  //       'startAt' => $startAt,
+  //       'endAt' => $endAt,
+  //     ];
+
+  //     error_log("📤 History payload: " . json_encode($payload));
+
+  //     try {
+  //       $result = $deyeAPI->deyePost('/station/history', $payload);
+  //       error_log("✅ " . $periodName . " API success: " . ($result['success'] ?? 'unknown'));
+  //       error_log("📦 " . $periodName . " records count: " . count($result['stationDataItems'] ?? []));
+
+  //       if (!empty($result['stationDataItems'])) {
+  //         error_log("📝 " . $periodName . " first record: " . json_encode($result['stationDataItems'][0]));
+  //       } else {
+  //         error_log("❌ " . $periodName . " No data returned");
+  //       }
+  //       return $result;
+  //     } catch (Exception $error) {
+  //       error_log("❌ " . $periodName . " API error: " . $error->getMessage());
+  //       return ['stationDataItems' => []];
+  //     }
+  //   };
+
+  //   // Try different date combinations
+  //   error_log("\n=== TODAY DATA ===");
+  //   $todayStart1 = (clone $now)->setTime(0, 0, 0)->format('Y-m-d');
+  //   $todayEnd1 = (clone $now)->modify('+1 day')->format('Y-m-d');
+  //   $todayData1 = $fetchHistory(2, $todayStart1, $todayEnd1, "today (method 1)");
+
+  //   $todayStart2 = (clone $now)->modify('-1 day')->format('Y-m-d');
+  //   $todayEnd2 = (clone $now)->modify('+1 day')->format('Y-m-d');
+  //   $todayData2 = $fetchHistory(2, $todayStart2, $todayEnd2, "today (method 2)");
+
+  //   error_log("\n=== THIS MONTH DATA ===");
+  //   $thisMonthStart1 = (clone $now)->modify('first day of this month')->format('Y-m');
+  //   $thisMonthEnd1 = (clone $now)->modify('first day of next month')->format('Y-m');
+  //   $thisMonthData1 = $fetchHistory(3, $thisMonthStart1, $thisMonthEnd1, "this month (method 1)");
+
+  //   $thisMonthStart2 = (clone $now)->modify('first day of this month')->format('Y-m-d');
+  //   $thisMonthEnd2 = (clone $now)->modify('+1 day')->format('Y-m-d');
+  //   $thisMonthData2 = $fetchHistory(2, $thisMonthStart2, $thisMonthEnd2, "this month daily (method 2)");
+
+  //   error_log("\n=== LAST MONTH DATA ===");
+  //   $lastMonthStart = (clone $now)->modify('first day of last month')->format('Y-m');
+  //   $lastMonthEnd = (clone $now)->modify('first day of this month')->format('Y-m');
+  //   $lastMonthData = $fetchHistory(3, $lastMonthStart, $lastMonthEnd, "last month");
+
+  //   // Parse energy data
+  //   $parseEnergyData = function ($data, $periodName) {
+  //     $items = $data['stationDataItems'] ?? [];
+  //     error_log("\n📊 Parsing " . $periodName . " - " . count($items) . " records");
+
+  //     $result = [
+  //       'solarProduction' => 0,
+  //       'exportToGrid' => 0,
+  //       'importFromGrid' => 0,
+  //       'consumption' => 0,
+  //       'chargeEnergy' => 0,
+  //       'dischargeEnergy' => 0
+  //     ];
+
+  //     foreach ($items as $item) {
+  //       error_log("🔢 " . $periodName . " record: " . json_encode([
+  //         'generationValue' => $item['generationValue'] ?? 0,
+  //         'gridValue' => $item['gridValue'] ?? 0,
+  //         'purchaseValue' => $item['purchaseValue'] ?? 0,
+  //         'consumptionValue' => $item['consumptionValue'] ?? 0,
+  //         'chargeValue' => $item['chargeValue'] ?? 0,
+  //         'dischargeValue' => $item['dischargeValue'] ?? 0,
+  //         'dateTime' => $item['dateTime'] ?? '',
+  //         'year' => $item['year'] ?? '',
+  //         'month' => $item['month'] ?? '',
+  //         'day' => $item['day'] ?? ''
+  //       ]));
+
+  //       $result['solarProduction'] += floatval($item['generationValue'] ?? 0);
+  //       $result['exportToGrid'] += (floatval($item['gridValue'] ?? 0) > 0 ? floatval($item['gridValue'] ?? 0) : 0);
+  //       $result['importFromGrid'] += floatval($item['purchaseValue'] ?? 0);
+  //       $result['consumption'] += floatval($item['consumptionValue'] ?? 0);
+  //       $result['chargeEnergy'] += floatval($item['chargeValue'] ?? 0);
+  //       $result['dischargeEnergy'] += floatval($item['dischargeValue'] ?? 0);
+  //     }
+
+  //     error_log("✅ " . $periodName . " parsed result: " . json_encode($result));
+  //     return $result;
+  //   };
+
+  //   // Use the data that actually has records
+  //   $todayData = !empty($todayData1['stationDataItems']) ? $todayData1 : $todayData2;
+  //   $thisMonthData = !empty($thisMonthData1['stationDataItems']) ? $thisMonthData1 : $thisMonthData2;
+
+  //   $summary = [
+  //     'today' => $parseEnergyData($todayData, "today"),
+  //     'thisMonth' => $parseEnergyData($thisMonthData, "this month"),
+  //     'lastMonth' => $parseEnergyData($lastMonthData, "last month"),
+  //   ];
+
+  //   error_log("\n🎯 FINAL SUMMARY: " . json_encode($summary));
+
+  //   sendResponse([
+  //     'success' => true,
+  //     'stationId' => $stationId,
+  //     'summary' => $summary,
+  //     'debug' => [
+  //       'todayRecords' => count($todayData['stationDataItems'] ?? []),
+  //       'thisMonthRecords' => count($thisMonthData['stationDataItems'] ?? []),
+  //       'lastMonthRecords' => count($lastMonthData['stationDataItems'] ?? []),
+  //       'currentTime' => $now->format('Y-m-d H:i:s'),
+  //     ]
+  //   ]);
+  // }
+
+  // 🟢 Get station energy summary - PRODUCTION VERSION
+  // if (preg_match('#^/api/stations/summary/(\d+)$#', $path, $matches) && $method === 'GET') {
+  //   $stationId = (int)$matches[1];
+
+  //   if ($stationId <= 0) {
+  //     sendError("Invalid stationId", 400);
+  //   }
+
+  //   $now = new DateTime();
+
+  //   $fetchHistory = function ($granularity, $startAt, $endAt) use ($deyeAPI, $stationId) {
+  //     $payload = [
+  //       'stationId' => $stationId,
+  //       'granularity' => $granularity,
+  //       'startAt' => $startAt,
+  //       'endAt' => $endAt,
+  //     ];
+
+  //     try {
+  //       $result = $deyeAPI->deyePost('/station/history', $payload);
+  //       return $result;
+  //     } catch (Exception $error) {
+  //       return ['stationDataItems' => []];
+  //     }
+  //   };
+
+  //   // Fetch data for all periods
+  //   $todayData = $fetchHistory(
+  //     2,
+  //     (clone $now)->setTime(0, 0, 0)->format('Y-m-d'),
+  //     (clone $now)->modify('+1 day')->format('Y-m-d')
+  //   );
+
+  //   $thisMonthData = $fetchHistory(
+  //     3,
+  //     (clone $now)->modify('first day of this month')->format('Y-m'),
+  //     (clone $now)->modify('first day of next month')->format('Y-m')
+  //   );
+
+  //   $lastMonthData = $fetchHistory(
+  //     3,
+  //     (clone $now)->modify('first day of last month')->format('Y-m'),
+  //     (clone $now)->modify('first day of this month')->format('Y-m')
+  //   );
+
+  //   // Parse energy data
+  //   $parseEnergyData = function ($data) {
+  //     $items = $data['stationDataItems'] ?? [];
+  //     $result = [
+  //       'solarProduction' => 0,
+  //       'exportToGrid' => 0,
+  //       'importFromGrid' => 0,
+  //       'consumption' => 0,
+  //       'chargeEnergy' => 0,
+  //       'dischargeEnergy' => 0
+  //     ];
+
+  //     foreach ($items as $item) {
+  //       $result['solarProduction'] += floatval($item['generationValue'] ?? 0);
+  //       $result['exportToGrid'] += (floatval($item['gridValue'] ?? 0) > 0 ? floatval($item['gridValue'] ?? 0) : 0);
+  //       $result['importFromGrid'] += floatval($item['purchaseValue'] ?? 0);
+  //       $result['consumption'] += floatval($item['consumptionValue'] ?? 0);
+  //       $result['chargeEnergy'] += floatval($item['chargeValue'] ?? 0);
+  //       $result['dischargeEnergy'] += floatval($item['dischargeValue'] ?? 0);
+  //     }
+
+  //     return $result;
+  //   };
+
+  //   sendResponse([
+  //     'success' => true,
+  //     'stationId' => $stationId,
+  //     'summary' => [
+  //       'today' => $parseEnergyData($todayData),
+  //       'thisMonth' => $parseEnergyData($thisMonthData),
+  //       'lastMonth' => $parseEnergyData($lastMonthData),
+  //     ]
+  //   ]);
+  // }
+  // 🟢 Get station energy summary - IMPROVED VERSION
+  if (preg_match('#^/api/stations/summary/(\d+)$#', $path, $matches) && $method === 'GET') {
+    try {
+      $stationId = (int)$matches[1];
+      if ($stationId <= 0) throw new Exception("Invalid stationId");
+
+      $now = new DateTime();
+
+      $fetchHistory = function ($granularity, $startAt, $endAt, $label) use ($deyeAPI, $stationId) {
+        $payload = [
+          'stationId' => $stationId,
+          'granularity' => $granularity,
+          'startAt' => $startAt,
+          'endAt' => $endAt,
+        ];
+
+        try {
+          $result = $deyeAPI->deyePost('/station/history', $payload);
+          return $result['stationDataItems'] ?? [];
+        } catch (Exception $error) {
+          error_log("❌ {$label} fetch error: " . $error->getMessage());
+          return [];
+        }
+      };
+
+      $parseEnergyData = function ($items) {
+        return array_reduce($items, function ($acc, $item) {
+          return [
+            'solarProduction' => $acc['solarProduction'] + (floatval($item['generationValue'] ?? 0)),
+            'exportToGrid' => $acc['exportToGrid'] + (floatval($item['gridValue'] ?? 0)),
+            'importFromGrid' => $acc['importFromGrid'] + (floatval($item['purchaseValue'] ?? 0)),
+            'consumption' => $acc['consumption'] + (floatval($item['consumptionValue'] ?? 0)),
+            'chargeEnergy' => $acc['chargeEnergy'] + (floatval($item['chargeValue'] ?? 0)),
+            'dischargeEnergy' => $acc['dischargeEnergy'] + (floatval($item['dischargeValue'] ?? 0)),
+          ];
+        }, [
+          'solarProduction' => 0,
+          'exportToGrid' => 0,
+          'importFromGrid' => 0,
+          'consumption' => 0,
+          'chargeEnergy' => 0,
+          'dischargeEnergy' => 0
+        ]);
+      };
+
+      // --- 🕐 TODAY ---
+      $todayStart = (clone $now)->setTime(0, 0, 0)->format('Y-m-d');
+      $tomorrow = (clone $now)->modify('+1 day')->format('Y-m-d');
+      $todayItems = $fetchHistory(2, $todayStart, $tomorrow, "today");
+
+      // --- 📅 YESTERDAY ---
+      $yesterdayStart = (clone $now)->modify('-1 day')->setTime(0, 0, 0)->format('Y-m-d');
+      $todayEnd = (clone $now)->setTime(0, 0, 0)->format('Y-m-d');
+      $yesterdayItems = $fetchHistory(2, $yesterdayStart, $todayEnd, "yesterday");
+
+      // --- 🗓️ THIS MONTH ---
+      $thisMonthStart = (clone $now)->modify('first day of this month')->format('Y-m');
+      $nextMonthStart = (clone $now)->modify('first day of next month')->format('Y-m');
+      $thisMonthItems = $fetchHistory(3, $thisMonthStart, $nextMonthStart, "this month");
+
+      // --- 📆 LAST MONTH ---
+      $lastMonthStart = (clone $now)->modify('first day of last month')->format('Y-m');
+      $thisMonthStartForLast = (clone $now)->modify('first day of this month')->format('Y-m');
+      $lastMonthItems = $fetchHistory(3, $lastMonthStart, $thisMonthStartForLast, "last month");
+
+      // --- Build summary ---
+      $summary = [
+        'today' => $parseEnergyData($todayItems),
+        'yesterday' => $parseEnergyData($yesterdayItems),
+        'thisMonth' => $parseEnergyData($thisMonthItems),
+        'lastMonth' => $parseEnergyData($lastMonthItems),
+      ];
+
+      sendResponse([
+        'success' => true,
+        'stationId' => $stationId,
+        'summary' => $summary,
+        'debug' => [
+          'todayRecords' => count($todayItems),
+          'yesterdayRecords' => count($yesterdayItems),
+          'thisMonthRecords' => count($thisMonthItems),
+          'lastMonthRecords' => count($lastMonthItems),
+          'currentTime' => $now->format('Y-m-d H:i:s'),
+        ]
+      ]);
+    } catch (Exception $err) {
+      error_log("❌ Station Summary Error: " . $err->getMessage());
+      sendError($err->getMessage(), 500);
+    }
+  }
+  // 🟢 Get devices for stations (POST)
+  if ($path === '/api/stations/devices' && $method === 'POST') {
+    $input = json_decode(file_get_contents('php://input'), true);
+
+    $page = $input['page'] ?? 1;
+    $size = $input['size'] ?? 20;
+    $stationIds = $input['stationIds'] ?? [];
+
+    error_log("📡 Fetching devices for stations: " . json_encode($stationIds));
+    error_log("📄 Page: " . $page . " Size: " . $size);
+
+    if (!$stationIds || !is_array($stationIds) || empty($stationIds)) {
+      sendError("stationIds array is required and cannot be empty", 400);
+    }
+
+    if (count($stationIds) > 10) {
+      sendError("Maximum 10 stations per batch allowed", 400);
+    }
+
+    $payload = [
+      'page' => (int)$page,
+      'size' => (int)$size,
+      'stationIds' => array_map('intval', $stationIds)
+    ];
+
+    error_log("📤 Devices payload: " . json_encode($payload));
+
+    $response = $deyeAPI->deyePost('/station/device', $payload);
+    error_log("📥 Raw devices API response: " . json_encode($response));
+
+    sendResponse([
+      'success' => true,
+      'data' => $response,
+      'pagination' => [
+        'page' => $payload['page'],
+        'size' => $payload['size'],
+        'total' => $response['total'] ?? 0
+      ]
+    ]);
+  }
+
+  // 🟢 Get devices for single station (GET)
+  if (preg_match('#^/api/stations/(\d+)/devices$#', $path, $matches) && $method === 'GET') {
+    $stationId = $matches[1];
+    $page = $_GET['page'] ?? 1;
+    $size = $_GET['size'] ?? 50;
+
+    error_log("📡 Fetching devices for station: " . $stationId);
+
+    if (!$stationId) {
+      sendError("stationId is required", 400);
+    }
+
+    $payload = [
+      'page' => (int)$page,
+      'size' => (int)$size,
+      'stationIds' => [(int)$stationId]
+    ];
+
+    error_log("📤 Single station devices payload: " . json_encode($payload));
+
+    $response = $deyeAPI->deyePost('/station/device', $payload);
+    error_log("📥 Raw devices response: " . json_encode($response));
+
+    // Enhanced response with device status mapping
+    $deviceListItems = $response['deviceListItems'] ?? [];
+    $enhancedItems = array_map(function ($device) use ($deyeAPI) {
+      return array_merge($device, [
+        'connectStatusText' => $deyeAPI->getConnectStatusText($device['connectStatus'] ?? 0),
+        'isOnline' => ($device['connectStatus'] ?? 0) === 1,
+        'isOffline' => ($device['connectStatus'] ?? 0) === 0,
+        'isAlert' => ($device['connectStatus'] ?? 0) === 2
+      ]);
+    }, $deviceListItems);
+
+    $enhancedResponse = array_merge($response, ['deviceListItems' => $enhancedItems]);
+
+    sendResponse([
+      'success' => true,
+      'stationId' => (int)$stationId,
+      'data' => $enhancedResponse,
+      'deviceCount' => count($enhancedItems),
+      'pagination' => [
+        'page' => $payload['page'],
+        'size' => $payload['size'],
+        'total' => $response['total'] ?? 0
+      ]
+    ]);
+  }
+
+  // 🟢 Get device by serial number
+  if (preg_match('#^/api/devices/([^/]+)$#', $path, $matches) && $method === 'GET') {
+    $deviceSn = $matches[1];
+    $stationId = $_GET['stationId'] ?? null;
+
+    error_log("📡 Fetching device by SN: " . $deviceSn);
+
+    if (!$deviceSn) {
+      sendError("deviceSn is required", 400);
+    }
+
+    if (!$stationId) {
+      sendError("stationId query parameter is required", 400);
+    }
+
+    $payload = [
+      'page' => 1,
+      'size' => 100,
+      'stationIds' => [(int)$stationId]
+    ];
+
+    $response = $deyeAPI->deyePost('/station/device', $payload);
+
+    // Find specific device by serial number
+    $device = null;
+    foreach ($response['deviceListItems'] ?? [] as $item) {
+      if ($item['deviceSn'] === $deviceSn) {
+        $device = $item;
+        break;
+      }
+    }
+
+    if (!$device) {
+      sendError("Device with SN " . $deviceSn . " not found in station " . $stationId, 404);
+    }
+
+    // Enhanced device info
+    $enhancedDevice = array_merge($device, [
+      'connectStatusText' => $deyeAPI->getConnectStatusText($device['connectStatus'] ?? 0),
+      'isOnline' => ($device['connectStatus'] ?? 0) === 1,
+      'isOffline' => ($device['connectStatus'] ?? 0) === 0,
+      'isAlert' => ($device['connectStatus'] ?? 0) === 2,
+      'productType' => $deyeAPI->getProductType($device['productId'] ?? '')
+    ]);
+
+    sendResponse([
+      'success' => true,
+      'data' => $enhancedDevice
+    ]);
+  }
+
+  // Route not found
+  sendError("Endpoint not found", 404);
+} catch (Exception $e) {
+  error_log("❌ API Error: " . $e->getMessage());
+  sendError($e->getMessage(), 500);
+}
