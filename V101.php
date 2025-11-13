@@ -60,14 +60,17 @@ function fetchHistory($stationId, $token_d, $granularity, $startAt, $endAt = nul
 // ======================= STEP 5: Parse and sum data =======================
 function parseEnergyData($items)
 {
-    // Initialize totals (Pb, Pc, Pg, Gc)
     $acc = ["Pb" => 0, "Pc" => 0, "Pg" => 0, "Gc" => 0];
 
     foreach ($items as $item) {
-        $acc["Pg"] += floatval($item["generationValue"] ?? 0);  // solar generation
-        $acc["Gc"] += floatval($item["gridValue"] ?? 0);        // grid output
-        $acc["Pc"] += floatval($item["purchaseValue"] ?? 0);    // imported energy
-        $acc["Pb"] += floatval($item["consumptionValue"] ?? 0); // local consumption
+        $acc["Pg"] += floatval($item["generationValue"] ?? 0);
+        $acc["Gc"] += floatval($item["gridValue"] ?? 0);
+        $acc["Pc"] += floatval($item["purchaseValue"] ?? 0);
+        $acc["Pb"] += floatval($item["consumptionValue"] ?? 0);
+    }
+
+    foreach ($acc as $key => $value) {
+        $acc[$key] = number_format((float)$value, 2, '.', '');
     }
 
     return $acc;
@@ -117,16 +120,16 @@ $summary = [
 ];
 
 // ======================= STEP 8: Format output for JS =======================
-// We match your JS expectations: ttotals and ytotals
 $result = [
     "success" => true,
     "stationId" => $instID,
     "ttotals" => $summary["today"],
     "ytotals" => $summary["yesterday"],
-    "thisMonth" => $summary["thisMonth"],
-    "lastMonth" => $summary["lastMonth"]
+    "mttotals" => $summary["thisMonth"],
+    "mltotals" => $summary["lastMonth"]
 ];
 
 echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 exit();
 ?>
+	

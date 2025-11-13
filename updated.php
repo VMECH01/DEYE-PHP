@@ -70,6 +70,11 @@ function parseEnergyData($items)
         $acc["Pb"] += floatval($item["consumptionValue"] ?? 0); // local consumption
     }
 
+    // Round all values to 2 decimal places
+    foreach ($acc as $key => $value) {
+        $acc[$key] = number_format((float)$value, 2, '.', '');
+    }
+
     return $acc;
 }
 
@@ -117,14 +122,15 @@ $summary = [
 ];
 
 // ======================= STEP 8: Format output for JS =======================
-// We match your JS expectations: ttotals and ytotals
 $result = [
     "success" => true,
     "stationId" => $instID,
+
+    // Matches your JS naming convention
     "ttotals" => $summary["today"],
     "ytotals" => $summary["yesterday"],
-    "thisMonth" => $summary["thisMonth"],
-    "lastMonth" => $summary["lastMonth"]
+    "mttotals" => $summary["thisMonth"], // this month totals
+    "mltotals" => $summary["lastMonth"]  // last month totals
 ];
 
 echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
