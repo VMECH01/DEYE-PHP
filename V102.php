@@ -3,7 +3,7 @@ header("Content-Type: application/json; charset=utf-8");
 
 // ======================= STEP 1: Validate Token =======================
 $reqHeaders = getallheaders();
-if (!isset($reqHeaders["Token"]) || $reqHeaders["Token"] != "Token IdeYNazjrEtOVbfPPTh8GXXhkZ") {
+if (!isset($reqHeaders["Token"]) || $reqHeaders["Token"] !== "Token IdeYNazjrEtOVbfPPTh8GXXhkZ") {
     http_response_code(401);
     echo json_encode(["success" => false, "msg" => "Unauthorized or Token missing"]);
     exit();
@@ -35,9 +35,7 @@ function fetchHistory($stationId, $token_d, $granularity, $startAt, $endAt = nul
         "granularity" => $granularity,
         "startAt" => $startAt
     ];
-    if ($endAt) {
-        $payload["endAt"] = $endAt;
-    }
+    if ($endAt) $payload["endAt"] = $endAt;
 
     $curl = curl_init();
     curl_setopt_array($curl, [
@@ -50,6 +48,7 @@ function fetchHistory($stationId, $token_d, $granularity, $startAt, $endAt = nul
             "Authorization: Bearer " . $token_d
         ]
     ]);
+
     $response = curl_exec($curl);
     curl_close($curl);
 
@@ -63,10 +62,10 @@ function parseEnergyData($items)
     $acc = ["Pb" => 0, "Pc" => 0, "Pg" => 0, "Gc" => 0];
 
     foreach ($items as $item) {
-        $acc["Pg"] += floatval($item["gridValue"] ?? 0);  // grid output
-        $acc["Gc"] += floatval($item["purchaseValue"] ?? 0); // imported energy
+        $acc["Pg"] += floatval($item["gridValue"] ?? 0);       // grid output
+        $acc["Gc"] += floatval($item["purchaseValue"] ?? 0);   // imported energy
         $acc["Pc"] += floatval($item["generationValue"] ?? 0); // solar generation
-        $acc["Pb"] += floatval($item["chargeValue"] ?? 0);  //chargeEnergy
+        $acc["Pb"] += floatval($item["chargeValue"] ?? 0);     // chargeEnergy
     }
 
     foreach ($acc as $key => $value) {
@@ -92,23 +91,42 @@ $yesterdayItems = fetchHistory(
     $token_d,
     2,
     (clone $now)->modify("-1 day")->setTime(0, 0, 0)->format("Y-m-d"),
-    (clone $now)->modify("+1 day")->format("Y-m-d")
+    (clone $now)->modify("today")->format("Y-m-d")
 );
 
+// $thisMonthItems = fetchHistory(
+//     $instID,
+//     $token_d,
+//     3,
+//     (clone $now)->modify("first day of this month")->format("Y-m"),
+//     (clone $now)->modify("first day of next month")->format("Y-m")
+// );
+
+// $lastMonthItems = fetchHistory(
+//     $instID,
+//     $token_d,
+//     3,
+//     (clone $now)->modify("first day of last month")->format("Y-m"),
+//     (clone $now)->modify("first day of this month")->format("Y-m")
+// );
+
+
+// ---  THIS MONTH ---
 $thisMonthItems = fetchHistory(
     $instID,
     $token_d,
     3,
     (clone $now)->modify("first day of this month")->format("Y-m"),
-    (clone $now)->modify("first day of next month")->format("Y-m")
+    (clone $now)->modify("first day of this month")->format("Y-m")
 );
 
+// ---  LAST MONTH ---
 $lastMonthItems = fetchHistory(
     $instID,
     $token_d,
     3,
     (clone $now)->modify("first day of last month")->format("Y-m"),
-    (clone $now)->modify("first day of this month")->format("Y-m")
+    (clone $now)->modify("first day of last month")->format("Y-m")
 );
 
 // ======================= STEP 7: Summarize =======================
@@ -119,18 +137,20 @@ $summary = [
     "lastMonth" => parseEnergyData($lastMonthItems)
 ];
 
-// ======================= STEP 8: Format output for JS =======================
-
+// ======================= STEP 8: Output JSON =======================
 $result = [
     "success" => true,
     "stationId" => $instID,
     "ttotals" => $summary["today"],
     "ytotals" => $summary["yesterday"],
-    "mttotals" => $summary["thisMonth"],
-    "mltotals" => $summary["lastMonth"]
+    // Option A 
+    // "mttotals" => $summary["thisMonth"],  // this month
+    // "mltotals" => $summary["lastMonth"]   // last month
+    // option => B if not getting the data 
+    "thismonth" => $summary["thisMonth"],
+    "lastmonth" => $summary["lastMonth"]
 ];
 
 echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 exit();
 ?>
-	

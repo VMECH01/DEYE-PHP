@@ -1,43 +1,34 @@
-<!-- this is the my code file  -->
-
-dataJson = await dataPromise.json();
-        todayData = dataJson.ttotals;
-        yesterdayData = dataJson.ytotals;
-        // console.log("daily solar data\n", dataJson);
-        today_pb = Number(todayData.Pb);
-        today_pc = Number(todayData.Pc);
-        today_gc = Number(todayData.Gc);
-        if ("Pg" in todayData) {
-          today_pg = Number(todayData.Pg);
-        }
-        today_pgt = today_pb + today_pc + today_pg;
-        today_pgt = today_pgt.toFixed(2);
-        today_pb = today_pb.toFixed(2);
-        today_pc = today_pc.toFixed(2);
-        today_pg = today_pg.toFixed(2);
-        today_gc = today_gc.toFixed(2);
- 
-        // same logic for yesterday data
-        yesterday_pb = Number(yesterdayData.Pb);
-        yesterday_pc = Number(yesterdayData.Pc);
-        yesterday_gc = Number(yesterdayData.Gc);
-        if ("Pg" in yesterdayData) {
-          yesterday_pg = Number(yesterdayData.Pg);
-        }
-        yesterday_pgt = yesterday_pb + yesterday_pc + yesterday_pg;
-        yesterday_pgt = yesterday_pgt.toFixed(2);
-        yesterday_pb = yesterday_pb.toFixed(2);
-        yesterday_pc = yesterday_pc.toFixed(2);
-        yesterday_pg = yesterday_pg.toFixed(2);
-        yesterday_gc = yesterday_gc.toFixed(2);
- 
-        // set variable values on the view
-        v_today_pgt.innerHTML = ${today_pgt} kWh;
-        v_today_pg.innerHTML = ${today_pg} kWh;
-        v_today_gc.innerHTML = ${today_gc} kWh;
- 
-        v_yesterday_pgt.innerHTML = ${yesterday_pgt} kWh;
-        v_yesterday_pg.innerHTML = ${yesterday_pg} kWh;
-        v_yesterday_gc.innerHTML = ${yesterday_gc} kWh;
- 
-        break;
+        let dataJson = await dataPromise.json();        
+// console.log("monthly data\n", dataJson);
+        thismonthdata = dataJson["thismonth"];
+        lastmonthdata = dataJson["lastmonth"];
+        thismonth_gc = Number(thismonthdata.Gc);
+        thismonth_pb = Number(thismonthdata.Pb);
+        thismonth_pc = Number(thismonthdata.Pc);
+        if ("Pg" in thismonthdata) {
+          thismonth_pg = Number(thismonthdata.Pg);
+        }
+        thismonth_pgt = thismonth_pb + thismonth_pc + thismonth_pg;
+        thismonth_pgt = thismonth_pgt.toFixed(2);
+        thismonth_pb = thismonth_pb.toFixed(2);
+        thismonth_pc = thismonth_pc.toFixed(2);
+        thismonth_pg = thismonth_pg.toFixed(2);
+        thismonth_gc = thismonth_gc.toFixed(2);
+        lastmonth_gc = Number(lastmonthdata.Gc);
+        lastmonth_pb = Number(lastmonthdata.Pb);
+        lastmonth_pc = Number(lastmonthdata.Pc);
+        if ("Pg" in lastmonthdata) {
+          lastmonth_pg = Number(lastmonthdata.Pg);
+        }
+        lastmonth_pgt = lastmonth_pb + lastmonth_pc + lastmonth_pg;
+        lastmonth_pgt = lastmonth_pgt.toFixed(2);
+        lastmonth_pb = lastmonth_pb.toFixed(2);
+        lastmonth_pc = lastmonth_pc.toFixed(2);
+        lastmonth_pg = lastmonth_pg.toFixed(2);
+        lastmonth_gc = lastmonth_gc.toFixed(2);
+        thismonth_solarproduction.innerHTML = `${thismonth_pgt} kWh`;
+        thismonth_export_to_grid.innerHTML = `${thismonth_pg} kWh`;
+        thismonth_import_from_grid.innerHTML = `${thismonth_gc} kWh`;
+        lastmonth_solarproduction.innerHTML = `${lastmonth_pgt} kWh`;
+        lastmonth_export_to_grid.innerHTML = `${lastmonth_pg} kWh`;
+        lastmonth_import_from_grid.innerHTML = `${lastmonth_gc} kWh`;
